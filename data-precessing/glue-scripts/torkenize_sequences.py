@@ -68,8 +68,14 @@ tokenize_schema = ArrayType(ArrayType(IntegerType()))
 tokenize_udf = udf(tokenize_sequence, tokenize_schema)
 
 # Path to the CSV in S3
+# input_csv_path = "s3://us-east-1-protein-ref-data/sample/sample.csv/part-00000-6ace383c-54dd-4929-bf8a-aa7797f227ee-c000.csv"
+# output_tokenized_path = "s3://us-east-1-protein-ref-data/sample/torkenized/"
+
 input_csv_path = args["input_csv_path"]
 output_tokenized_path = args["output_tokenized_path"]
+
+# input_csv_path = "s3://us-east-1-protein-ref-data/uniref100/uniref100.csv/part-00000-0c2a4048-112f-471d-a6f5-09c5f76b9be7-c000.csv"
+# output_tokenized_path = "s3://us-east-1-protein-ref-data/uniref100/torkenized-p8/"
 
 # Read the CSV
 df = spark.read.option("header", "true").csv(input_csv_path)
@@ -78,10 +84,18 @@ df_tokenized = df.withColumn("tokens", tokenize_udf(df["sequence"]))
 df_tokenized = df_tokenized.withColumn("input_ids", df_tokenized.tokens[0])\
                            .withColumn("attention_mask", df_tokenized.tokens[1])
                            
+#df_tokenized.select("input_ids", "attention_mask").show(truncate=False)
 # Splitting into train and test
 train_df, test_df = df_tokenized.randomSplit([0.8, 0.2])
 
-train_df.write.parquet(output_tokenized_path + "/train")
-train_df.write.parquet(output_tokenized_path + "/test")
+num_train_partitions = 100000  # You might need to adjust this value based on your data and experimentation
+num_test_partitions = 20000
+
+# Repartition the DataFrame
+train_df_repartitioned = train_df.repartition(num_train_partitions)
+test_df_repartitioned = test_df.repartition(num_test_partitions)
+
+train_df_repartitioned.write.parquet(output_tokenized_path + "/train")
+test_df_repartitioned.write.parquet(output_tokenized_path + "/test")
 
 job.commit()

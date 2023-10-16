@@ -3,11 +3,11 @@
 # "jobParameters": [
 # 			{
 # 				"key": "--input_path",
-# 				"value": "s3://us-east-1-protein-ref-data/sample/sample.fasta.gz",
+# 				"value": "s3://<bucket>/sample/sample.fasta.gz",
 # 			},
 # 			{
 # 				"key": "--output_path",
-# 				"value": "s3://us-east-1-protein-ref-data/sample-output/sample.csv",
+# 				"value": "s3://<bucket>/sample-output/sample.csv",
 # 			}
 # 		]
 

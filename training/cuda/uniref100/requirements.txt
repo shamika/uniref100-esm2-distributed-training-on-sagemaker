@@ -1,5 +1,8 @@
 transformers==4.31.0
 datasets==2.14.2
-accelerate==0.21.0
 evaluate
 tensorboard
+fastai>2.7.12
+torch --index-url https://download.pytorch.org/whl/nightly/cu119
+#sagemaker_ssh_helper
+#smdebug

@@ -123,6 +123,12 @@ def parse_args():
         default="test_index_map",
         help="",
     )
+    parser.add_argument(
+        "--apply_activation_checkpointing",
+        type=int,
+        default=0,
+        help="Whether to apply activation checkpointing or not.",
+    )
 
     args, _ = parser.parse_known_args()
     return args

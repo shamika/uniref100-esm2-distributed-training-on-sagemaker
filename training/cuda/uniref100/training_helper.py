@@ -4,7 +4,7 @@ import math
 from timeit import default_timer as timer
 import torch
 from torch.utils.data import DataLoader
-from torch.distributed.elastic.utils.data import ElasticDistributedSampler
+from torch.utils.data.distributed import DistributedSampler
 from datetime import timedelta
 
 from transformers import (
@@ -119,8 +119,8 @@ def load_data(args, world_size, global_rank, num_workers=1):
     train_dataset = Uniref100TorkenizedDataset(args.training_dir, get_index_file_index_path(args.training_dir, args.train_index_file_path))
     test_dataset = Uniref100TorkenizedDataset(args.test_dir, get_index_file_index_path(args.test_dir, args.test_index_file_path))
     
-    train_sampler = ElasticDistributedSampler(train_dataset, num_replicas=world_size, rank=global_rank)
-    test_sampler = ElasticDistributedSampler(test_dataset, num_replicas=world_size, rank=global_rank)
+    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=global_rank)
+    test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=global_rank)
     
     tokenizer = AutoTokenizer.from_pretrained(args.model_id)
     tokenizer.model_max_length = args.max_length

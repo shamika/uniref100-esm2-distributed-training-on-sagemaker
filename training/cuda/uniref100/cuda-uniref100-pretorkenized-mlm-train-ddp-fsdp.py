@@ -24,11 +24,22 @@ from transformers.models.esm.configuration_esm import get_default_vocab_list
 
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    CPUOffload,
+# from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+# from torch.distributed.fsdp.fully_sharded_data_parallel import (
+#     CPUOffload,
+#     BackwardPrefetch,
+# )
+
+from torch.distributed.fsdp import (
+    FullyShardedDataParallel as FSDP,
+    MixedPrecision,
     BackwardPrefetch,
+    ShardingStrategy,
+    FullStateDictConfig,
+    StateDictType,
+    CPUOffload
 )
+
 from torch.distributed.fsdp.wrap import (
     size_based_auto_wrap_policy,
     enable_wrap,
@@ -37,7 +48,6 @@ from torch.distributed.fsdp.wrap import (
 )
 import functools
 from transformers.models.esm.modeling_esm import EsmLayer
-from torch.distributed.fsdp import ShardingStrategy
 
 
 if __name__ == "__main__":
@@ -64,6 +74,7 @@ if __name__ == "__main__":
             EsmLayer
         }
     )
+    sharding_strategy = ShardingStrategy.HYBRID_SHARD
 
     torch.cuda.set_device(local_rank)
     
@@ -78,10 +89,10 @@ if __name__ == "__main__":
     init_start_event = torch.cuda.Event(enable_timing=True)
     init_end_event = torch.cuda.Event(enable_timing=True)
 
-    model.to(local_rank)
+    #model.to(local_rank)
     
     model = FSDP(model, auto_wrap_policy=auto_wrap_policy, 
-                 sharding_strategy=ShardingStrategy.HYBRID_SHARD,
+                 sharding_strategy=sharding_strategy,
                  cpu_offload=CPUOffload(offload_params=True),
                  device_id=torch.cuda.current_device())
     
@@ -96,7 +107,6 @@ if __name__ == "__main__":
 
     if global_rank == 0:
         print("Training with {}". format(train_metrics))
-
     
     starting_epoch = 0
 
@@ -106,22 +116,27 @@ if __name__ == "__main__":
         train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler, train_sampler, train_metrics)
         eval(model, epoch, local_rank, eval_loader, eval_metrics)
 
+        if global_rank == 0:
+            print(f"Epoch {epoch} completed.")
+
     init_end_event.record()
 
     if global_rank == 0:
         print(f"CUDA event elapsed time: {init_start_event.elapsed_time(init_end_event) / 1000}sec")
         print(f"{model}")
-
-    # Save checkpoint for evaluation (xm.save ensures only one process save)
-    dist.barrier()
-    if global_rank == 0:
-        model = model.module if hasattr(model, "module") else model
-        os.makedirs(args.model_dir, exist_ok=True)
-        checkpoint = {"state_dict": model.state_dict()}
-        path = f"{args.model_dir}/checkpoint.pt"
-        torch.save(checkpoint, path)
-
-        print("##### Model saved to: ", f"{args.model_dir}/checkpoint.pt")
-        print(f"Run completed in {timer() - run_start} sec.")
+        print(f"Entering save model state")
     
+    save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
+        cpu_state = model.state_dict()
+
+    if global_rank == 0:
+        print(f"Saving model ...")
+        path = f"{args.model_dir}/model.pt"
+        torch.save(cpu_state, path)
+
+        print("##### Model saved to: ", f"{path}")
+        print(f"Run completed in {timer() - run_start} sec.")
+
+    dist.barrier()
     cleanup()

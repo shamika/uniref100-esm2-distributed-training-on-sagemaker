@@ -180,8 +180,7 @@ if __name__ == "__main__":
     if global_rank == 0:
         print(f"--> CUDA event elapsed time: {init_start_event.elapsed_time(init_end_event) / 1000}sec")
         print(f"{model}")
-    
-    print(f"--> Run completed in {timer() - run_start} sec.")
+        print(f"--> Run completed in {timer() - run_start} sec.")
 
     dist.barrier()
     cleanup()

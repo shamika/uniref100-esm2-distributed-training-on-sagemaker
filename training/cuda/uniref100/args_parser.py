@@ -129,6 +129,12 @@ def parse_args():
         default=0,
         help="Whether to apply activation checkpointing or not.",
     )
+    parser.add_argument(
+        "--apply_mixed_precision",
+        type=int,
+        default=0,
+        help="Whether to apply mixed precision training.",
+    )
 
     args, _ = parser.parse_known_args()
     return args

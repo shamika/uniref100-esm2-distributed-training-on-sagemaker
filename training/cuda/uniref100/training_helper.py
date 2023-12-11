@@ -30,8 +30,9 @@ def training_metrics(args, train_loader, world_size):
     num_total_training_steps = args.num_epochs * num_update_steps_per_epoch # per GPU
 
     total_train_batch_size = args.per_device_train_batch_size * world_size
-    samples_processed_per_logging_update = total_train_batch_size * args.logging_steps
     total_train_batch_size_with_gradient_accumulation = total_train_batch_size * args.gradient_accumulation_steps
+    
+    samples_processed_per_logging_update = total_train_batch_size_with_gradient_accumulation * args.logging_steps
     tokens_processed_per_logging_update = (
         samples_processed_per_logging_update * args.max_length
     )

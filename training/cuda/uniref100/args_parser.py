@@ -135,6 +135,12 @@ def parse_args():
         default=0,
         help="Whether to apply mixed precision training.",
     )
+    parser.add_argument(
+        "--save_each_epoch_checkpoint",
+        type=int,
+        default=0,
+        help="1 - Means saving each epoch checkpoint. default 0",
+    )
 
     args, _ = parser.parse_known_args()
     return args

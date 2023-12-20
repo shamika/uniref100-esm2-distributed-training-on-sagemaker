@@ -114,7 +114,7 @@ if __name__ == "__main__":
     # Start training loop
     for epoch in range(starting_epoch, args.num_epochs):
         train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler, train_sampler, train_metrics)
-        eval(model, epoch, local_rank, eval_loader, eval_metrics)
+        eval(args, model, epoch, local_rank, eval_loader, eval_metrics)
 
         if global_rank == 0:
             print(f"Epoch {epoch} completed.")

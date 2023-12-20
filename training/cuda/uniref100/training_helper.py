@@ -65,22 +65,22 @@ def evaluation_metrics(args, eval_loader, world_size):
     }
 
 def report_metrics(
-    local_rank, start_time, loss, epoch, steps, metrics, prefix=None
+    local_rank, start_time, loss, epoch, step, global_batch_size, global_token_size, prefix=None
 ):
     reported_loss = loss.detach().float()
     now = timer()
     duration = now - start_time
-    samples_per_sec = metrics["samples_processed_per_logging_update"] / duration
-    tokens_per_sec = metrics["tokens_processed_per_logging_update"] / duration
+    samples_per_sec = global_batch_size / duration
+    tokens_per_sec = global_token_size / duration
     perplexity = calc_perplexity(reported_loss)
     if prefix:
         prefix = prefix + " "
     if local_rank == 0:
         print(
-            f"Epoch: {epoch}, Step: {steps}, {prefix}Loss: {reported_loss:0.4f}, {prefix}Perplexity: {perplexity:0.4f}, {prefix}Samples/sec: {samples_per_sec:0.4f}, {prefix}Tokens/sec: {tokens_per_sec:0.4f}"
+            f"Epoch: {epoch}, Step: {step}, {prefix}Loss: {reported_loss:0.4f}, {prefix}Perplexity: {perplexity:0.4f}, {prefix}Samples/sec: {samples_per_sec:0.4f}, {prefix}Tokens/sec: {tokens_per_sec:0.4f}, {prefix}Total time taken for the step :{duration}"
         )
 
-    return None 
+
 
 def get_index_file_index_path(base_path, folder):
     index_file_folder = os.path.join(base_path, folder)
@@ -149,16 +149,22 @@ def load_data(args, world_size, global_rank, num_workers=1):
     return train_dataset, train_sampler, train_loader, eval_loader
 
 
-def train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler, train_sampler, metrics):
+def train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler, train_sampler):
     
     model.train()
     train_sampler.set_epoch(epoch)
 
     ddp_acc_loss_and_steps = torch.zeros(2).to(local_rank)
     optimizer.zero_grad()  # Ensure gradients are zeroed out at the start
-
+    
+    total_current_device_samples_per_step = 0
+    
     for idx, batch in enumerate(train_loader):
         train_loop_start_time = timer()
+        total_current_device_samples_per_step += batch['input_ids'].size(0)
+        
+        #print("--------------Current batch size {}".format(total_current_device_samples_per_step))
+        
         batch = {
                 k: v.to(local_rank) for k, v, in batch.items()
         }  # Transfer data to accelerator
@@ -168,7 +174,6 @@ def train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler,
         loss = outputs.loss  # Calculate loss
         loss = loss / args.gradient_accumulation_steps # Normalize the loss
         loss.backward()  # Calculate new gradients with backprop
-
 
         ddp_acc_loss_and_steps[0] += loss.item() * args.gradient_accumulation_steps  # Scale loss back up
 
@@ -181,7 +186,10 @@ def train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler,
 
             ddp_acc_loss_and_steps[0] /= args.gradient_accumulation_steps
             ddp_acc_loss_and_steps[1] += 1
-
+            
+            total_global_device_samples_per_step = total_current_device_samples_per_step * dist.get_world_size()
+            total_current_device_samples_per_step = 0
+            
             if (ddp_acc_loss_and_steps[1] % args.logging_steps == 0):
                 dist.all_reduce(ddp_acc_loss_and_steps, op=dist.ReduceOp.AVG)
                 #ddp_acc_loss_and_steps[0] /= dist.get_world_size()
@@ -191,28 +199,40 @@ def train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler,
                         ddp_acc_loss_and_steps[0],
                         epoch,
                         ddp_acc_loss_and_steps[1],
-                        metrics,
+                        total_global_device_samples_per_step,
+                        total_global_device_samples_per_step * args.max_length,
                         "Training",
                     )
             ddp_acc_loss_and_steps[0] = 0.0 # Reset accumulated loss after reporting
 
 
-def eval(model, epoch, local_rank, eval_loader, metrics):
+def eval(args, model, epoch, local_rank, eval_loader):
     eval_start_time = timer()
     model.eval()
     eval_running_loss = 0
-
+    total_current_device_samples = 0 
+    
     with torch.no_grad():
         for batch in eval_loader:
+            batch_size = batch['input_ids'].size(0)
+            total_current_device_samples += batch_size
             batch = {k: v.to(local_rank) for k, v, in batch.items()}
             outputs = model(**batch)
             eval_loss = outputs.loss
-            eval_running_loss += eval_loss.detach().float() / len(eval_loader)
-
+            eval_running_loss += eval_loss.detach().float()
+    
+    average_loss = eval_running_loss / len(eval_loader)
+    
     completed_steps = (epoch + 1) * len(eval_loader)
+    
+    dist.all_reduce(average_loss, op=dist.ReduceOp.AVG)
     report_metrics(
-        local_rank, eval_start_time, 
-        eval_running_loss, epoch, 
-        completed_steps, metrics, 
+        local_rank, 
+        eval_start_time, 
+        average_loss, 
+        epoch, 
+        completed_steps,
+        total_current_device_samples * dist.get_world_size(),
+        total_current_device_samples * args.max_length,
         "Eval"
     )

@@ -84,6 +84,9 @@ def activation_checkpointing(model):
         )
 
 def save_model_checkpoint_fsdp(model, path, global_rank):
+    #Since the full model parameters here can fit onto a cpu `FullStateDict` is used. 
+    # Otherwise 'LocalStateDict' should be used to save each shard seperately.
+    
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
         cpu_state = model.state_dict()
@@ -109,8 +112,6 @@ if __name__ == "__main__":
     train_dataset, train_sampler, train_loader, eval_loader = load_data(args, world_size, global_rank)
 
     train_metrics = training_metrics(args, train_loader, world_size)
-    
-    eval_metrics = evaluation_metrics(args, eval_loader, world_size)
     
     auto_wrap_policy = functools.partial(
         transformer_auto_wrap_policy, 
@@ -166,19 +167,26 @@ if __name__ == "__main__":
     init_start_event.record()
     # Start training loop
     for epoch in range(starting_epoch, args.num_epochs):
-        train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler, train_sampler, train_metrics)
-        eval(model, epoch, local_rank, eval_loader, eval_metrics)
+        epoch_start = timer()
+        train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler, train_sampler)
+        
+        if global_rank == 0:
+            print(f"--> Train Epoch {epoch} completed in {timer() - epoch_start}")
+        
+        eval(args, model, epoch, local_rank, eval_loader)
 
         if global_rank == 0:
-            print(f"--> Epoch {epoch} completed.")
+            print(f"--> Total Epoch {epoch} completed in {timer() - epoch_start}")
 
         path = f"{args.model_dir}/model-chkp-epoch-{epoch}.pt"
-        save_model_checkpoint_fsdp(model, path, global_rank)
+        
+        if (args.save_each_epoch_checkpoint == 1 or epoch == args.num_epochs - 1):
+            save_model_checkpoint_fsdp(model, path, global_rank)
 
     init_end_event.record()
 
     if global_rank == 0:
-        print(f"--> CUDA event elapsed time: {init_start_event.elapsed_time(init_end_event) / 1000}sec")
+        print(f"--> CUDA event elapsed time with checkpoint saving : {init_start_event.elapsed_time(init_end_event) / 1000}sec")
         print(f"{model}")
         print(f"--> Run completed in {timer() - run_start} sec.")
 

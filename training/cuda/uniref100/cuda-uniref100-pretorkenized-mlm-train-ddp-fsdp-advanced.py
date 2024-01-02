@@ -167,21 +167,24 @@ if __name__ == "__main__":
     init_start_event.record()
     # Start training loop
     for epoch in range(starting_epoch, args.num_epochs):
-        epoch_start = timer()
+        
+        epoch_train_start = timer()
         train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler, train_sampler)
-        
         if global_rank == 0:
-            print(f"--> Train Epoch {epoch} completed in {timer() - epoch_start}")
+            print(f"--> Train Epoch {epoch} completed in {timer() - epoch_train_start}")
         
+        epoch_eval_start = timer()
         eval(args, model, epoch, local_rank, eval_loader)
-
         if global_rank == 0:
-            print(f"--> Total Epoch {epoch} completed in {timer() - epoch_start}")
+            print(f"--> Eval Epoch {epoch} completed in {timer() - epoch_eval_start}")
 
         path = f"{args.model_dir}/model-chkp-epoch-{epoch}.pt"
         
         if (args.save_each_epoch_checkpoint == 1 or epoch == args.num_epochs - 1):
             save_model_checkpoint_fsdp(model, path, global_rank)
+        
+        if global_rank == 0:
+             print(f"--> Total Epoch {epoch} completed in {timer() - epoch_train_start}")
 
     init_end_event.record()
 

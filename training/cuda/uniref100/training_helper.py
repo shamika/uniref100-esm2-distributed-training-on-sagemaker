@@ -13,6 +13,8 @@ from transformers import (
 )
 
 from uniref100_torkenized_dataset import Uniref100TorkenizedDataset
+from uniref100_torkenized_dynamodb_dataset import DynamoDBDataset
+
 from os import listdir
 import torch.distributed as dist
 
@@ -114,17 +116,22 @@ def init_distributed_training(args):
 def cleanup():
     dist.destroy_process_group()
 
-def load_data(args, world_size, global_rank, num_workers=1):
+def load_data(args, world_size, global_rank, num_workers=16):
     """Loads training and evaluation datasets."""
-
-    train_dataset = Uniref100TorkenizedDataset(args.training_dir, get_index_file_index_path(args.training_dir, args.train_index_file_path))
+    
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
+    tokenizer.model_max_length = args.max_length
+    
+    # train_dataset = Uniref100TorkenizedDataset(args.training_dir, get_index_file_index_path(args.training_dir, args.train_index_file_path))
+    train_dataset = DynamoDBDataset(table_name="uniref100-esm2-tokenized", total_items=319594, region='us-east-1')
+    
     test_dataset = Uniref100TorkenizedDataset(args.test_dir, get_index_file_index_path(args.test_dir, args.test_index_file_path))
+    #train_dataset = UnirefInMemoryCSVDataset(args.training_dir, tokenizer, args.max_length)
     
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=global_rank)
     test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=global_rank)
     
-    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
-    tokenizer.model_max_length = args.max_length
+    
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm_probability=0.15
     )
@@ -159,11 +166,11 @@ def train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler,
     
     total_current_device_samples_per_step = 0
     
+    step_start_time = timer()
+    
     for idx, batch in enumerate(train_loader):
-        train_loop_start_time = timer()
+            
         total_current_device_samples_per_step += batch['input_ids'].size(0)
-        
-        #print("--------------Current batch size {}".format(total_current_device_samples_per_step))
         
         batch = {
                 k: v.to(local_rank) for k, v, in batch.items()
@@ -188,14 +195,13 @@ def train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler,
             ddp_acc_loss_and_steps[1] += 1
             
             total_global_device_samples_per_step = total_current_device_samples_per_step * dist.get_world_size()
-            total_current_device_samples_per_step = 0
             
             if (ddp_acc_loss_and_steps[1] % args.logging_steps == 0):
                 dist.all_reduce(ddp_acc_loss_and_steps, op=dist.ReduceOp.AVG)
                 #ddp_acc_loss_and_steps[0] /= dist.get_world_size()
                 report_metrics(
                         local_rank,
-                        train_loop_start_time,
+                        step_start_time,
                         ddp_acc_loss_and_steps[0],
                         epoch,
                         ddp_acc_loss_and_steps[1],
@@ -204,6 +210,8 @@ def train(args, model, epoch, local_rank, train_loader, optimizer, lr_scheduler,
                         "Training",
                     )
             ddp_acc_loss_and_steps[0] = 0.0 # Reset accumulated loss after reporting
+            total_current_device_samples_per_step = 0
+            step_start_time = timer()
 
 
 def eval(args, model, epoch, local_rank, eval_loader):
